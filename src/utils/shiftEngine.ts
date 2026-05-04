@@ -343,7 +343,7 @@ export const generateMonthlyShifts = async (
             const lastDate = lastShift.date;
             const staffOnLastDate = holidayHistory.filter(s => s.date === lastDate);
             
-            // [V76.4] 詳細なログ出力とフォールバック照合の追加
+            // [V76.5] 1. 前月最終日の全担当者を現在のリストで動的にインデックス化
             const indicesOnLastDay = staffOnLastDate.map(row => {
               const staffId = row.staff_id || row.staffId;
               const staffName = normalizeName(row.staff_name || row.staffName || "");
@@ -354,7 +354,7 @@ export const generateMonthlyShifts = async (
                 idx = sortedStaffList.findIndex(s => s.id === staffId);
               }
               
-              // 2. UUID で見つからない場合は名前で検索 (セーフティネット)
+              // 2. UUID で見つからない場合は名前で検索
               if (idx === -1 && staffName) {
                 idx = sortedStaffList.findIndex(s => normalizeName(s.name) === staffName);
               }
@@ -362,16 +362,29 @@ export const generateMonthlyShifts = async (
               return idx;
             }).filter(idx => idx !== -1);
 
-            // 2. STRICTLY find the mathematical maximum using Math.max
-            let tailIndex = indicesOnLastDay.length > 0 ? Math.max(...indicesOnLastDay) : -1;
+            let tailIndex = -1;
+            if (indicesOnLastDay.length > 0) {
+              const minIdx = Math.min(...indicesOnLastDay);
+              const maxIdx = Math.max(...indicesOnLastDay);
+
+              // 配列の末尾から先頭への折り返し（ラップアラウンド）を検知 (例: [13, 0])
+              if (maxIdx - minIdx > sortedStaffList.length / 2) {
+                // 折り返しケース: 先頭に戻ったグループ（小さいインデックス）の中で最大値をとる
+                const smallIndices = indicesOnLastDay.filter(i => i < sortedStaffList.length / 2);
+                tailIndex = smallIndices.length > 0 ? Math.max(...smallIndices) : maxIdx;
+              } else {
+                // 通常ケース: 単純な最大値
+                tailIndex = maxIdx;
+              }
+            }
     
             // 3. Set the last assigned index
             if (tailIndex !== -1) {
               const lastAssignedIndex = tailIndex;
               currentStaffIndex = (lastAssignedIndex + 1) % sortedStaffList.length;
-              console.log(`[CarryOver Debug] V76.4 SUCCESS: Date: ${lastDate}, Names: ${staffOnLastDate.map(s => s.staff_name || s.staffName).join('/')}, Indices: ${indicesOnLastDay.join(', ')}, Tail: ${lastAssignedIndex} -> Next: ${currentStaffIndex}(${sortedStaffList[currentStaffIndex]?.name})`);
+              console.log(`[CarryOver Debug] V76.5 SUCCESS (Wrap-aware): Date: ${lastDate}, Names: ${staffOnLastDate.map(s => s.staff_name || s.staffName).join('/')}, Indices: ${indicesOnLastDay.join(', ')}, Tail: ${lastAssignedIndex} -> Next: ${currentStaffIndex}(${sortedStaffList[currentStaffIndex]?.name})`);
             } else {
-              console.warn(`[CarryOver Debug] V76.4 FAILED: 最終日のスタッフをリストから特定できませんでした。Names: ${staffOnLastDate.map(s => s.staff_name || s.staffName).join('/')}`);
+              console.warn(`[CarryOver Debug] V76.5 FAILED: 最終日のスタッフを特定できませんでした。`);
               currentStaffIndex = 0; // フォールバック
             }
           } else {
