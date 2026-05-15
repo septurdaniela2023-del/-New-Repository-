@@ -82,6 +82,12 @@ export const CalendarScreen: React.FC<any> = ({
 
   // [V55.0] PERFECT DATA SYNC: 全てのスタッフで共通の重複排除・優先順位ロジック
   const requestMap = React.useMemo(() => {
+    // [ID Debug]
+    requests.forEach((req: any) => {
+      const staff = (staffList || []).find((s: any) => s.id === req.staff_id || s.user_id === req.staff_id || s.userId === req.staff_id);
+      console.log(`[ID Debug] RequestDate: ${req.date}, DB_StaffId: ${req.staff_id}, FoundStaff: ${staff ? staff.name : 'NOT FOUND'}`);
+    });
+
     const map = new Map<string, Map<string, any>>();
     const allData = [...requests, ...shifts].filter(r => {
       return true;
@@ -112,75 +118,95 @@ export const CalendarScreen: React.FC<any> = ({
       const rawId = String(r.staff_id || r.staffId || r.user_id || r.userId || extractedId || '').trim();
       const sName = normalizeLocal(r.staffName || r.staff_name || '');
       
-      // [V75.0] UNIFIED UUID RESOLUTION:
-      // データ型をUUIDに完全統一。名前ベースのフォールバックを廃止。
+      // [V76.0] UNIFIED UUID RESOLUTION:
+      // データ型を完全統一。AuthUUIDとStaffIDのズレを吸収するため、必ず名簿(staffList)を経由して一意のIDを取得する
+      // [V76.3 STRICT UUID ONLY]
+      // 厳密なUUIDマッチのみを使用。名前ベースの照合は禁止。
+      // リクエストの Auth UUID (user_id 等) から、名簿上の真の staff.id を逆引きしてキーとする。
       let resolvedId = '';
-      if (rawId && rawId.length > 5) {
-        resolvedId = rawId;
-      } else if (sName) {
-        // 名簿からUUIDを特定する。特定できないデータは表示対象外とする（データ型の混在を避けるため）
-        const staffEntry = (staffList || []).find(s => normalizeLocal(s.name) === sName);
-        if (staffEntry?.id) {
-          resolvedId = staffEntry.id;
-        }
+      const authId = rawId;
+
+      const staffEntry = (staffList || []).find(s => 
+        s.id === authId || s.userId === authId || s.user_id === authId
+      );
+
+      if (staffEntry?.id) {
+        resolvedId = staffEntry.id; // 真のStaff IDに解決
+      } else if (authId && authId.length > 5) {
+        resolvedId = authId; // 見つからない場合はそのまま使用
       }
 
       if (!resolvedId) {
-        console.warn('[V75.0] Orphan record (No UUID match):', r);
+        console.warn('[V76.3] Orphan record (No UUID match found):', r);
         return;
       }
 
-      const key = resolvedId; // キーは純粋なUUIDのみ
+      // [V76.4 STRICT NORMALIZATION]
+      // オブジェクト自体のIDも真のスタッフIDに上書き（正規化）して保存する
+      const normalizedReq = { ...r, staff_id: resolvedId, staffId: resolvedId };
+
+      const key = resolvedId; // キーは必ず一貫したID（staff.id）になる
       const existing = dayMap.get(key);
-        
-        const isManualEntry = (rec: any) => 
-          !!(rec.is_manual || rec.isManual) || 
-          String(rec.id || '').startsWith('m-') || 
-          String(rec.id || '').startsWith('manual-') || 
-          String(rec.id || '').startsWith('req-');
+          
+      const isManualEntry = (rec: any) => 
+        !!(rec.is_manual || rec.isManual) || 
+        String(rec.id || '').startsWith('m-') || 
+        String(rec.id || '').startsWith('manual-') || 
+        String(rec.id || '').startsWith('req-');
 
-        const isOff = (t: string) => ['公休', '年休', '有給休暇', '夏季休暇', '特休', '休暇', '欠勤', '看護休暇', '研修'].includes(t);
+      const isOff = (t: string) => ['公休', '年休', '有給休暇', '夏季休暇', '特休', '休暇', '欠勤', '看護休暇', '研修'].includes(t);
 
-        const getTime = (i: any) => {
-          const t = i.updatedAt || i.updated_at || i.createdAt || i.created_at || 0;
-          return typeof t === 'string' ? new Date(t).getTime() : (typeof t === 'number' ? t : 0);
-        };
+      const getTime = (i: any) => {
+        const t = i.updatedAt || i.updated_at || i.createdAt || i.created_at || 0;
+        return typeof t === 'string' ? new Date(t).getTime() : (typeof t === 'number' ? t : 0);
+      };
 
-        let isBetter = false;
-        if (!existing) {
-          isBetter = true;
-        } else {
-          const isManNew = isManualEntry(r);
-          const wasManOld = isManualEntry(existing);
-          const isOffNew = isOff(r.type);
-          const isOffOld = isOff(existing.type);
+      let isBetter = false;
+      if (!existing) {
+        isBetter = true;
+      } else {
+        const isManNew = isManualEntry(normalizedReq);
+        const wasManOld = isManualEntry(existing);
+        const isOffNew = isOff(normalizedReq.type);
+        const isOffOld = isOff(existing.type);
 
-          if (isManNew && !wasManOld) {
-            isBetter = true; 
-          } else if (!isManNew && wasManOld) {
-            isBetter = false; 
-          } else if (isManNew && wasManOld) {
-            // 共に手動の場合の優先順位判定
-            const isMNew = String(r.id).startsWith('m-');
-            const isMOld = String(existing.id).startsWith('m-');
-            
-            if (isMNew && !isMOld) {
-              isBetter = true; // 管理者による手動調整を最優先
-            } else if (!isMNew && isMOld) {
-              isBetter = false; // 既存が管理者調整なら、申請はそれを上書きできない
-            } else {
-              isBetter = getTime(r) > getTime(existing); // 同じ種類同士なら新しい方を優先
-            }
+        if (isManNew && !wasManOld) {
+          isBetter = true; 
+        } else if (!isManNew && wasManOld) {
+          isBetter = false; 
+        } else if (isManNew && wasManOld) {
+          const isMNew = String(normalizedReq.id).startsWith('m-');
+          const isMOld = String(existing.id).startsWith('m-');
+          
+          if (isMNew && !isMOld) {
+            isBetter = true;
+          } else if (!isMNew && isMOld) {
+            isBetter = false;
           } else {
-            // 共に自動の場合、安全のため公休（休み）を優先
-            isBetter = isOffNew && !isOffOld;
+            isBetter = getTime(normalizedReq) > getTime(existing);
           }
+        } else {
+          isBetter = isOffNew && !isOffOld;
         }
+      }
 
-        if (isBetter) {
-          dayMap.set(key, r);
-        }
+      if (isBetter) {
+        dayMap.set(key, normalizedReq);
+      }
     });
+
+    // [V76.5 Verification Log] 全員の休暇データが正しく正規化され格納されたかを出力
+    const allLeaves: string[] = [];
+    map.forEach((dayMap, date) => {
+      dayMap.forEach((req, staffId) => {
+        const isOff = ['公休', '年休', '有給休暇', '夏季休暇', '特休', '休暇', '欠勤', '看護休暇', '研修'].includes(req.type);
+        if (isOff) {
+          const staff = (staffList || []).find((s: any) => s.id === req.staff_id);
+          allLeaves.push(`${req.date} | Staff: ${staff ? staff.name : 'Unknown ID: ' + req.staff_id} | Type: ${req.type}`);
+        }
+      });
+    });
+    console.log("[All Approved Leaves in Map]:", allLeaves);
 
     return map;
   }, [requests, shifts]);
@@ -210,8 +236,9 @@ export const CalendarScreen: React.FC<any> = ({
 
         const dayMap = requestMap.get(dateStr);
         const sId = String(staff.id || '').trim();
-        const sName = normalize(staff.name || '');
 
+        // [V76.3 STRICT UUID ONLY]
+        // 名前による照合を完全に排除。必ず staff.id に紐づくデータのみを取り出す
         const singleReq = sId ? dayMap?.get(sId) : null;
         const userRequests = singleReq ? [singleReq] : [];
         
@@ -378,9 +405,9 @@ export const CalendarScreen: React.FC<any> = ({
         status: 'approved',
         reason: '管理者による調整',
         isManual: true, // リクエストテーブル用
+        hours: (['時間休', '時間給', '特休', '看護休暇', '時間外', '時間外出勤'].includes(selectedType)) ? hourlyDuration : undefined,
         details: { 
-          note: '手動割当',
-          duration: (selectedType === '時間休' || selectedType === '時間給' || selectedType === '特休' || selectedType === '看護休暇') ? hourlyDuration : undefined
+          note: '手動割当'
         },
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(), // [V61.0] 優先度判定のためにupdatedAtを付与
@@ -409,6 +436,7 @@ export const CalendarScreen: React.FC<any> = ({
           type: r.type,
           status: 'approved',
           is_manual: true,
+          hours: r.hours,
           details: r.details
         });
 
@@ -427,6 +455,7 @@ export const CalendarScreen: React.FC<any> = ({
           type: r.type,
           status: 'approved',
           reason: r.reason,
+          hours: r.hours,
           details: { ...r.details, isManual: true, updatedAt: r.updatedAt },
           is_manual: true
         });
@@ -619,8 +648,8 @@ export const CalendarScreen: React.FC<any> = ({
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View>
-              <ThemeText variant="h1">カレンダー [V76.5]</ThemeText>
-              <ThemeText variant="caption" style={{ fontSize: 9, opacity: 0.3, color: COLORS.textSecondary }}>[BUILD: VERSION 76.5 - WRAP-AWARE CARRY-OVER]</ThemeText>
+              <ThemeText variant="h1">カレンダー [V76.6]</ThemeText>
+              <ThemeText variant="caption" style={{ fontSize: 9, opacity: 0.3, color: COLORS.textSecondary }}>[BUILD: VERSION 76.6 - REMOVE DELETE ALL UI]</ThemeText>
             </View>
             <TouchableOpacity 
               style={{ padding: 8 }} 
@@ -688,7 +717,7 @@ export const CalendarScreen: React.FC<any> = ({
                       <ThemeText variant="caption" style={{ color: COLORS.textSecondary, marginLeft: 8 }} numberOfLines={1}>
                         ({item.type}{item.isHomeVisit ? ' / 訪問' : (item.isAssistant ? ' / 助手' : '')})
                         {item.details?.startTime && <ThemeText variant="caption" style={{ color: COLORS.accent, fontWeight: 'bold' }}> {item.details.startTime}-{item.details.endTime}</ThemeText>}
-                        {(!item.details?.startTime && (item.details?.duration ?? item.hours ?? item.details?.hours) !== undefined) && (
+                        {(!item.details?.startTime && (item.details?.duration ?? item.hours ?? item.details?.hours) > 0) && (
                           <ThemeText variant="caption" style={{ color: COLORS.accent, fontWeight: 'bold' }}> {item.details?.duration ?? item.hours ?? item.details?.hours}h</ThemeText>
                         )}
                         {item.status === 'pending' && <ThemeText variant="caption" style={{ color: '#f59e0b', fontWeight: 'bold' }}> [申請中]</ThemeText>}
@@ -733,7 +762,7 @@ export const CalendarScreen: React.FC<any> = ({
                     >
                       ({item.type})
                       {item.details?.startTime && <ThemeText variant="caption" style={{ color: COLORS.accent }}> {item.details.startTime}-{item.details.endTime}</ThemeText>}
-                      {(!item.details?.startTime && (item.details?.duration ?? item.hours ?? item.details?.hours) !== undefined) && (
+                      {(!item.details?.startTime && (item.details?.duration ?? item.hours ?? item.details?.hours) > 0) && (
                         <ThemeText variant="caption" style={{ color: COLORS.accent }}> {item.details?.duration ?? item.hours ?? item.details?.hours}h</ThemeText>
                       )}
                       {item.status === 'pending' && <ThemeText variant="caption" style={{ color: '#f59e0b', fontWeight: 'bold' }}> [申請中]</ThemeText>}
@@ -839,7 +868,7 @@ export const CalendarScreen: React.FC<any> = ({
             </View>
 
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
-              {['出勤', '午前休', '午後休', '時間休', '午前振替', '午後振替', '公休', '特休', '年休', '看護休暇', '空欄'].map(t => (
+              {['出勤', '午前休', '午後休', '時間休', '時間外', '午前振替', '午後振替', '公休', '特休', '年休', '看護休暇', '空欄'].map(t => (
                 <TouchableOpacity 
                   key={t}
                   style={[
@@ -853,7 +882,7 @@ export const CalendarScreen: React.FC<any> = ({
               ))}
             </View>
 
-            {(selectedType === '時間休' || selectedType === '時間給' || selectedType === '特休' || selectedType === '看護休暇') && (
+            {(selectedType === '時間休' || selectedType === '時間給' || selectedType === '特休' || selectedType === '看護休暇' || selectedType === '時間外' || selectedType === '時間外出勤') && (
               <View style={{ marginBottom: 20 }}>
                 <ThemeText variant="label" style={{ marginBottom: 8 }}>時間設定 (15分単位)</ThemeText>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>

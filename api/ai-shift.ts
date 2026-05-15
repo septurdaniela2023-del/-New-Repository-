@@ -278,36 +278,51 @@ export default async function handler(req: any, res: any) {
       return { hasAdjacent, workedSameDayLastWeek, alreadyWorkedHoliday };
     };
 
+    // [V76.0] 助手および「訪問リハ」は休日ローテーションから除外
     const holidayQueue = (staffList || [])
       .filter((s: any) => {
         const isAssistant = s.profession === '助手' || s.placement === '助手';
+        const isVisitingRehab = s.profession === '訪問リハ' || s.placement === '訪問リハ';
         const isUnavailable = s.status === '長期休暇' || s.status === '入職前';
         const isNoHolidayValue = s.noHoliday ?? s.no_holiday;
-        // [V55.1] 月ごとの個別設定を優先
         const isMonthlyNoHoliday = s.monthlyNoHoliday?.[monthPrefix] ?? s.monthly_no_holiday?.[monthPrefix];
         
         const isNoHoliday = isMonthlyNoHoliday ?? (isNoHolidayValue === true || isNoHolidayValue === 'true' || isNoHolidayValue === 1 || isNoHolidayValue === '1');
-        return !isAssistant && !isUnavailable && !isNoHoliday;
+        return !isAssistant && !isVisitingRehab && !isUnavailable && !isNoHoliday;
       })
       .sort((a: any, b: any) => {
         const pA = PREFERRED_ORDER.indexOf(normalize(a.name));
         const pB = PREFERRED_ORDER.indexOf(normalize(b.name));
-        
-        // [V56.0] 7月の開始位置調整 (13番: 森田氏から開始)
-        let offset = 0;
-        if (Number(year) === 2026 && Number(month) === 7) {
-            // 13番から開始 = 13番目以降の人を優先（先頭に持ってくる）
-            // インデックス 12 (13番) を 0 とみなすようなソート
-            const rotationIndex = 12; // 13番目
-            const rotate = (idx: number) => {
-                if (idx === -1) return 999;
-                return (idx - rotationIndex + PREFERRED_ORDER.length) % PREFERRED_ORDER.length;
-            };
-            return rotate(pA) - rotate(pB);
-        }
-
         return (pA === -1 ? 999 : pA) - (pB === -1 ? 999 : pB);
       });
+
+    // [V76.0] キャリーオーバー自動化: 前月の最後の休日出勤者を探し、その次の人から開始する
+    let rotationStartIndex = 0;
+    if (allPrevRequests && allPrevRequests.length > 0) {
+      // 前月の休日（土日祝）の勤務記録を抽出
+      const prevHolidayWorks = allPrevRequests
+        .filter((r: any) => isHolidayDate(r.date) && isWorkingType(r.type))
+        .sort((a: any, b: any) => (a.date > b.date ? -1 : 1)); // 日付の降順（新しい順）
+      
+      if (prevHolidayWorks.length > 0) {
+        const lastWorkerName = normalize(prevHolidayWorks[0].staffName || prevHolidayWorks[0].staff_name);
+        const lastWorkerOrderIdx = PREFERRED_ORDER.indexOf(lastWorkerName);
+        
+        if (lastWorkerOrderIdx !== -1) {
+          // 前回の人の「次」のインデックス
+          const nextIdx = (lastWorkerOrderIdx + 1) % PREFERRED_ORDER.length;
+          console.log(`[Carry-Over] Last holiday worker: ${lastWorkerName}, Next starting person: ${PREFERRED_ORDER[nextIdx]}`);
+          
+          // holidayQueue を並び替える
+          const rotate = (idx: number) => (idx - nextIdx + PREFERRED_ORDER.length) % PREFERRED_ORDER.length;
+          holidayQueue.sort((a: any, b: any) => {
+            const idxA = PREFERRED_ORDER.indexOf(normalize(a.name));
+            const idxB = PREFERRED_ORDER.indexOf(normalize(b.name));
+            return rotate(idxA) - rotate(idxB);
+          });
+        }
+      }
+    }
 
     console.log("[Engine Debug] 休日出勤の候補者数 (土日祝休み設定のスタッフを除外後):", holidayQueue.length);
     console.log(`DEBUG: Holiday candidate names: ${holidayQueue.map((s: any) => s.name).join(', ')}`);

@@ -135,11 +135,11 @@ export const cloudStorage = {
       if (d.locked !== undefined) mapped.locked = d.locked;
       if (d.hours !== undefined) mapped.hours = d.hours;
       
-      // 時間数(hours)の復元（互換性維持：durationなどもチェック）
-      const rawDuration = mapped.hours ?? d.duration ?? mapped.duration;
+      // [STRICT REFACTOR] 専用の hours カラムから取得（フォールバックは最小限に）
+      const rawDuration = r.hours ?? d.hours ?? d.duration;
       if (rawDuration !== undefined && rawDuration !== null && rawDuration !== '') {
         const parsed = parseFloat(String(rawDuration));
-        mapped.hours = isNaN(parsed) ? (mapped.type === '半日振替' ? 3.75 : 1.0) : parsed;
+        mapped.hours = isNaN(parsed) ? (mapped.type === '半日振替' ? 3.75 : 0) : parsed;
       } else {
         // デフォルト値のフォールバック
         if (mapped.type === '半日振替') mapped.hours = 3.75;
@@ -193,7 +193,7 @@ export const cloudStorage = {
       if (r.source) details.source = r.source;
       if (r.isManual !== undefined) details.isManual = r.isManual;
       if (r.priority !== undefined) details.priority = r.priority;
-      if (r.hours !== undefined) details.hours = r.hours;
+      if (r.hours !== undefined) obj.hours = r.hours; // [STRICT REFACTOR] カラムへ直接セット
       if (r.locked !== undefined) details.locked = r.locked;
       
       const payload = { 
@@ -202,6 +202,7 @@ export const cloudStorage = {
         details 
       };
       validKeys.forEach(k => { if (payload[k] !== undefined) obj[k] = payload[k]; });
+      if (r.hours !== undefined) obj.hours = r.hours; // 明示的にhoursを保持
       return mapToSql(obj, REQ_MAP);
     });
 
@@ -224,7 +225,7 @@ export const cloudStorage = {
     const filtered = shifts.map(s => {
       const obj: any = {};
       // [V75.2] shiftsテーブルには updated_at カラムがないため除外する
-      const validKeys = ['id', 'staff_id', 'staff_name', 'date', 'type', 'status', 'is_manual', 'details', 'created_at'];
+      const validKeys = ['id', 'staff_id', 'staff_name', 'date', 'type', 'status', 'is_manual', 'hours', 'details', 'created_at'];
       validKeys.forEach(k => { if (s[k] !== undefined) obj[k] = s[k]; });
       if (obj.staff_name) obj.staff_name = normalizeName(obj.staff_name);
       return obj;
@@ -264,6 +265,7 @@ export const cloudStorage = {
       type: r.type,
       status: r.status,
       is_manual: !!(r.isManual || r.is_manual || String(r.id).startsWith('m-') || String(r.id).startsWith('req-')),
+      hours: r.hours ?? r.details?.hours ?? r.details?.duration,
       details: r.details,
       updated_at: r.updatedAt || r.updated_at || new Date().toISOString()
     }));

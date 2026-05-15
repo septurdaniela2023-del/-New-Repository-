@@ -424,54 +424,6 @@ export const AdminScreen: React.FC<AdminScreenProps> = ({
                   )}
                 </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={[styles.inlineBtn, { backgroundColor: 'rgba(239, 68, 68, 0.1)', marginLeft: 8 }]} 
-                  onPress={async () => {
-                    const monthName = `${currentYear}年${currentMonth + 1}月`;
-                    Alert.alert(
-                      '全データ削除',
-                      `${monthName} の「全スタッフ」のシフトと申請データをすべて削除しますか？\n(この操作は取り消せません)`,
-                      [
-                        { text: 'キャンセル', style: 'cancel' },
-                        { 
-                          text: '削除する', 
-                          style: 'destructive', 
-                          onPress: async () => {
-                            setIsAssigning(true);
-                            try {
-                              const prefix = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
-                              
-                              // 1. shifts テーブルから削除
-                              await supabase.from('shifts')
-                                .delete()
-                                .like('date', `${prefix}%`);
-                              
-                              // 2. requests テーブルから削除
-                              await supabase.from('requests')
-                                .delete()
-                                .like('date', `${prefix}%`);
-                              
-                              // 3. ローカルステートを更新
-                              setRequests(prev => prev.filter(r => !r.date?.startsWith(prefix)));
-                              
-                              if (fetchShifts) await fetchShifts();
-                              
-                              Alert.alert('完了', `${monthName} の全データを削除しました。`);
-                            } catch (e: any) {
-                              Alert.alert('エラー', '削除中にエラーが発生しました: ' + e.message);
-                            } finally {
-                              setIsAssigning(false);
-                            }
-                          }
-                        }
-                      ]
-                    );
-                  }}
-                  disabled={isAssigning}
-                >
-                  <XCircle size={18} color="#ef4444" />
-                  <ThemeText bold color="#ef4444" style={{marginLeft:6}}>全削除</ThemeText>
-                </TouchableOpacity>
 
                 {canUndoAutoAssign && !isAssigning && (
                   <TouchableOpacity 

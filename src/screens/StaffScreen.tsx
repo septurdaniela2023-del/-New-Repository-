@@ -223,8 +223,8 @@ export const StaffScreen: React.FC<StaffScreenProps> = (props) => {
   };
 
   // Constants
-  const SHIFT_TYPES = ['出勤', '公休', '夏季休暇', '時間休', '振替＋時間休', '1日振替', '半日振替', '特休', '年休', '空欄'];
-  const HOUR_SELECTOR_TYPES = ['時間休', '振替＋時間休', '特休', '時間給', '看護休暇', '午前休', '午後休'];
+  const SHIFT_TYPES = ['出勤', '公休', '夏季休暇', '時間休', '時間外', '振替＋時間休', '1日振替', '半日振替', '特休', '年休', '空欄'];
+  const HOUR_SELECTOR_TYPES = ['時間休', '時間外', '時間外出勤', '振替＋時間休', '特休', '時間給', '看護休暇', '午前休', '午後休'];
 
   const monthInfo = useMemo(() => (getMonthInfo(activeDate.getFullYear(), activeDate.getMonth()) || []) as MonthDay[], [activeDate]);
   
@@ -238,27 +238,26 @@ export const StaffScreen: React.FC<StaffScreenProps> = (props) => {
   const getReqHours = (r: any): number => {
     if (!r) return 0;
     
-    // [V72.6] 新しい時間保持方式（hoursプロパティまたはdetails.duration）を優先
-    const h = r.hours ?? r.details?.duration ?? r.details?.hours;
+    // [STRICT REFACTOR] 常に専用の hours カラムを最優先する
+    const h = r.hours;
     const parsedH = parseFloat(String(h));
-    if (h !== undefined && h !== null && h !== '' && !isNaN(parsedH)) return parsedH;
     
-    // Default values by type
+    // [V76.0] ユーザー指示: 0時間として記録されている場合でも、特定の休暇タイプなら7.75時間をデフォルトとする
+    const rType = (r.type || '').trim();
+    const isFullDayLeaveType = ['年休', '有給休暇', '夏季休暇', '特休', '全休', '休暇', '欠勤', '年給', '有給', '1日振替'].includes(rType);
+    
+    if (h !== undefined && h !== null && h !== '' && !isNaN(parsedH)) {
+      if (parsedH === 0 && isFullDayLeaveType) return 7.75;
+      return parsedH;
+    }
+    
+    // Default values by type (fallback)
     if (r.type === '1日振替') return 7.75;
     if (r.type === '半日振替') return 3.75;
-    const rType = (r.type || '').trim();
-    if (['年休', '有給休暇', '夏季休暇', '特休', '全休', '休暇', '欠勤', '年給', '有給'].includes(rType)) return 7.75;
+    if (isFullDayLeaveType) return 7.75;
     if (rType === '午前休') return 4.0;
     if (rType === '午後休') return 3.75;
     
-    // Fallback: calculate from details if available
-    if (r.details?.startTime && r.details?.endTime) {
-      try {
-        const [sh, sm] = String(r.details.startTime).split(':').map(Number);
-        const [eh, em] = String(r.details.endTime).split(':').map(Number);
-        if (!isNaN(sh) && !isNaN(eh)) return (eh + em / 60) - (sh + sm / 60);
-      } catch (e) {}
-    }
     return 0;
   };
 
@@ -367,11 +366,12 @@ export const StaffScreen: React.FC<StaffScreenProps> = (props) => {
         date: selectedDay,
         type: type,
         hours: HOUR_SELECTOR_TYPES.includes(type) ? selectedHours : undefined,
+        details: { note: '管理画面より更新' },
         status: 'approved',
         createdAt: now,
-        updatedAt: now, // 常に最新の時刻をセットして重複排除で勝つようにする
+        updatedAt: now, 
         isShift: true,
-        isManual: true // 手動フラグを確実に立てる
+        isManual: true 
       };
       
       const sT = normalize(selectedStaff.name);

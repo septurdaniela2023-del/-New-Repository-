@@ -125,9 +125,9 @@ export const RequestScreen: React.FC<RequestScreenProps> = ({ requests, setReque
       duration = MORNING_H;
     } else if (newRequest.type === '午後休' || newRequest.type === '半日振替') {
       duration = AFTERNOON_H;
-    } else if (newRequest.type === '1日振替' || newRequest.type === '年休' || newRequest.type === '夏季休暇') {
+    } else if (newRequest.type === '1日振替' || newRequest.type === '年休' || newRequest.type === '夏季休暇' || newRequest.type === '振替') {
       duration = 7.75;
-    } else if (newRequest.type === '時間休' || newRequest.type === '振替＋時間休' || newRequest.type === '特休') {
+    } else if (newRequest.type === '時間休' || newRequest.type === '振替＋時間休' || newRequest.type === '特休' || newRequest.type === '時間給' || newRequest.type === '看護休暇') {
       duration = newRequest.hours;
     }
 
@@ -140,11 +140,8 @@ export const RequestScreen: React.FC<RequestScreenProps> = ({ requests, setReque
         type: newRequest.type,
         date: newRequest.date,
         reason: newRequest.reason,
-        details: (newRequest.type === '時間休' || newRequest.type === '振替＋時間休' || newRequest.type === '特休') ? {
-          duration: duration
-        } : (newRequest.type === '午前休' || newRequest.type === '午後休' || newRequest.type === '半日振替' || newRequest.type === '1日振替') ? {
-          duration: duration
-        } : null
+        hours: duration, // 常にトップレベルのhoursカラムを使用
+        details: null
       };
 
       if (onSubmitRequest) {
@@ -196,6 +193,9 @@ export const RequestScreen: React.FC<RequestScreenProps> = ({ requests, setReque
               .filter(r => {
                 const isWorkType = r.type === '出勤' || r.type === '公休';
                 if (isWorkType || r.status === 'deleted') return false;
+                
+                // [NEW] 却下された申請は一般職員の履歴からは非表示にする（管理者は管理者画面で確認可能）
+                if (!isManager && r.status === 'rejected') return false;
                 
                 if (!isManager && normalizeName(r.staffName) !== normalizeName(profile?.name)) return false;
                 

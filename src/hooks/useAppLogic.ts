@@ -239,15 +239,19 @@ export const useAppLogic = () => {
       // profile.nameが英字の場合でも、スタッフリストの日本語名を優先する
       const officialName = staffRecord?.name || auth.profile?.name || '不明';
 
+      // [V76.3 STRICT UUID ONLY]
+      // Auth UUID のみで保存すると不整合の元になるため、必ず名簿の true staff.id に紐づけて保存する
+      const trueStaffId = staffRecord?.id || authUid;
+
       const requestId = 'req-' + Date.now();
       const now = new Date().toISOString();
       const newRequest = { 
         id: requestId,
         ...request, 
         status: 'pending',
-        staff_id: authUid,
-        staffId: authUid,
-        user_id: authUid,
+        staff_id: trueStaffId, // <--- 真のスタッフIDをセット
+        staffId: trueStaffId,
+        user_id: authUid, // 認証用のバックアップとして保持
         staff_name: officialName, 
         staffName: officialName, 
         created_at: now,
@@ -265,12 +269,13 @@ export const useAppLogic = () => {
       const { error } = await supabase.from('requests').insert([
         {
           id: newRequest.id,
-          staff_id: authUid, // [V75.3] Added staff_id
+          staff_id: trueStaffId, // [V76.3] Strict UUID
           user_id: authUid,
           staff_name: officialName,
           date: newRequest.date,
           type: newRequest.type,
           status: newRequest.status,
+          hours: newRequest.hours, // [STRICT REFACTOR] 専用カラムへ保存
           reason: newRequest.reason,
           details: newRequest.details,
           created_at: now
@@ -282,7 +287,7 @@ export const useAppLogic = () => {
       // 2. shiftsテーブルも更新（V73.0 整合性確保）
       const shiftPayload = {
         id: newRequest.id,
-        staff_id: authUid,
+        staff_id: trueStaffId, // [V76.3] Strict UUID
         staff_name: officialName,
         date: newRequest.date,
         type: newRequest.type,
@@ -379,6 +384,9 @@ export const useAppLogic = () => {
 
   const handleReject = useCallback(async (requestId: string) => {
     try {
+      const updatedItem = req.requests.find(r => r.id === requestId);
+      if (!updatedItem) return;
+
       const { error } = await supabase
         .from('requests')
         .update({ status: 'rejected' })
@@ -389,10 +397,15 @@ export const useAppLogic = () => {
       Alert.alert('完了', '却下・取り消しが完了しました');
 
       const now = new Date().toISOString();
+      const newWithStatus = { ...updatedItem, status: 'rejected', updatedAt: now };
       const newRequests = req.requests.map(r => 
-        r.id === requestId ? { ...r, status: 'rejected', updatedAt: now } : r
+        r.id === requestId ? newWithStatus : r
       );
       req.setRequests(newRequests);
+      
+      // V73.0: 却下時もシフトテーブルとの同期を強制し、不整合を防止
+      await cloudStorage.upsertRequestsAndShifts([newWithStatus]);
+      shifts.fetchShifts();
     } catch (e: any) {
       console.error('Reject error:', e);
       Alert.alert('エラー', 'エラー: ' + e.message);
@@ -614,11 +627,13 @@ export const useAppLogic = () => {
     onResetStaffPassword,
     handleLogout,
     handleForceCloudSync,
-    handleForceSave
+    handleForceSave,
+    handleReject,
+    handleBulkApprove
   }), [
     auth, staff, req, config, shifts, currentTab, showSetup, activeDate, isSyncing, isInitialized,
     handleLogin, handleAdminMasterLogin, handleRegister, onSubmitRequest, cancelRequest, approveRequest,
     onDeleteRequest, onAutoAssign, onUndoAutoAssign, onUpdateAvatar, onResetStaffPassword, handleLogout,
-    handleForceCloudSync, handleForceSave, isSupabaseConfigured, staff.patchStaff
+    handleForceCloudSync, handleForceSave, isSupabaseConfigured, staff.patchStaff, handleReject, handleBulkApprove
   ]);
 };

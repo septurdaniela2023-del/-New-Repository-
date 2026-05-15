@@ -46,23 +46,11 @@ export const AdminRequestScreen: React.FC<AdminRequestScreenProps> = ({
     if (Platform.OS === 'web') {
       const confirmOk = window.confirm(`表示中の承認待ち申請 ${pendings.length} 件をすべて承認しますか？`);
       if (!confirmOk) return;
-      window.alert("一括承認の処理を開始します...");
-    } else {
-      Alert.alert('一括承認処理を開始します...');
     }
 
     try {
       const ids = pendings.map(r => r.id);
-      const { error } = await supabase.from('requests').update({ status: 'approved' }).in('id', ids);
-      
-      if (error) throw error;
-
-      if (Platform.OS === 'web') {
-        window.alert("一括承認が完了しました！");
-        window.location.reload();
-      } else {
-        Alert.alert('完了', '一括承認しました');
-      }
+      await handleBulkApprove(ids); // 親コンポーネントの正規関数を使用（ステートが同期される）
     } catch (err: any) {
       if (Platform.OS === 'web') window.alert("エラーが発生しました: " + err.message);
       else Alert.alert("エラー", err.message);
@@ -70,18 +58,10 @@ export const AdminRequestScreen: React.FC<AdminRequestScreenProps> = ({
   };
 
   const handleHardwiredApprove = async (id: string) => {
-    if (Platform.OS === 'web') window.alert("承認処理を開始します...");
-    else Alert.alert('承認処理を開始します...');
-
     try {
-      const { error } = await supabase.from('requests').update({ status: 'approved' }).eq('id', id);
-      if (error) throw error;
-
+      await approveRequest(id, 'approved'); // 親コンポーネントの正規関数を使用
       if (Platform.OS === 'web') {
         window.alert("承認が完了しました！");
-        window.location.reload();
-      } else {
-        Alert.alert('完了', '承認しました');
       }
     } catch (err: any) {
       if (Platform.OS === 'web') window.alert("エラーが発生しました: " + err.message);
@@ -93,21 +73,10 @@ export const AdminRequestScreen: React.FC<AdminRequestScreenProps> = ({
     if (Platform.OS === 'web') {
       const confirmOk = window.confirm("この申請を却下しますか？");
       if (!confirmOk) return;
-      window.alert("却下処理を開始します...");
-    } else {
-      Alert.alert('却下処理を開始します...');
     }
 
     try {
-      const { error } = await supabase.from('requests').update({ status: 'rejected' }).eq('id', id);
-      if (error) throw error;
-
-      if (Platform.OS === 'web') {
-        window.alert("却下・取り消しが完了しました！");
-        window.location.reload();
-      } else {
-        Alert.alert('完了', '却下・取り消ししました');
-      }
+      await handleReject(id); // 親コンポーネントの正規関数を使用
     } catch (err: any) {
       if (Platform.OS === 'web') window.alert("エラーが発生しました: " + err.message);
       else Alert.alert("エラー", err.message);
