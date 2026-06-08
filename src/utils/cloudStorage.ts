@@ -347,11 +347,11 @@ export const cloudStorage = {
     console.log(`Smart-Sync completed. Resulting in ${cleanList.length} unified requests.`);
   },
 
-  // --- Realtime (V74.6 Bulletproof) ---
+  // --- Realtime (V76.6 Bulletproof) ---
   subscribeToChanges(callback: (payload: any) => void) {
     console.log('--- [REALTIME] Initializing Subscription (shifts, requests) ---');
     const channel = supabase
-      .channel('db-changes-v74')
+      .channel('db-changes-v76')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, (payload) => {
         console.log('--- [REALTIME_DEBUG] Request Event:', payload.eventType, 'ID:', payload.new?.id || payload.old?.id);
         callback(payload);

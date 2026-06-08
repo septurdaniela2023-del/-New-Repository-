@@ -260,25 +260,60 @@ export const CalendarScreen: React.FC<any> = ({
           return false;
         };
 
+        const getLeaveHoursOfRequest = (r: any) => {
+          if (!r) return 0;
+          const rType = (r.type || '').trim();
+          const isFullDayLeaveType = ['公休', '年休', '有給休暇', '夏季休暇', '特休', '全休', '休暇', '欠勤', '年給', '有給', '1日振替'].includes(rType);
+          
+          const h = r.hours ?? r.partialLeaveHours ?? r.leaveHours ?? r.details?.partialLeaveHours ?? r.details?.duration ?? r.details?.hours;
+          const parsedH = parseFloat(String(h));
+          
+          if (h !== undefined && h !== null && h !== '' && !isNaN(parsedH)) {
+            if (parsedH === 0 && isFullDayLeaveType) return isAssistant ? 7.5 : 7.75;
+            return parsedH;
+          }
+          
+          if (r.type === '1日振替') return isAssistant ? 7.5 : 7.75;
+          if (r.type === '半日振替') return 3.75;
+          if (isFullDayLeaveType) return isAssistant ? 7.5 : 7.75;
+          if (rType === '午前休') return 4.0;
+          if (rType === '午後休') return 3.75;
+          return 0;
+        };
+
         const approvedReqs = userRequests.filter(r => r.status === 'approved');
         const pendingReq = userRequests.find(r => r.status === 'pending');
+
+        let totalLeaveHours = 0;
+        if (approvedReqs.length > 0) {
+          approvedReqs.forEach(r => {
+            totalLeaveHours += getLeaveHoursOfRequest(r);
+          });
+        } else if (pendingReq) {
+          totalLeaveHours = getLeaveHoursOfRequest(pendingReq);
+        }
+
+        const maxLimit = isAssistant ? 7.5 : 7.75;
+        const isFullDayLeave = totalLeaveHours >= maxLimit;
 
         if (approvedReqs.length > 0) {
           const offReq = approvedReqs.find(r => isOffType(r.type));
           const workReq = approvedReqs.find(r => isWorkType(r.type));
 
-          if (offReq) {
-            off.push({ staff, type: offReq.type, requestId: offReq.id, isManual: !!(offReq.is_manual || offReq.isManual), isHomeVisit, isAssistant, status: 'approved', details: offReq.details });
-          } else if (workReq) {
-            working.push({ staff, type: workReq.type, requestId: workReq.id, isManual: !!(workReq.is_manual || workReq.isManual), isHomeVisit, isAssistant, status: 'approved', details: workReq.details });
+          if (isFullDayLeave || (offReq && getLeaveHoursOfRequest(offReq) >= maxLimit)) {
+            const displayReq = offReq || workReq || approvedReqs[0];
+            off.push({ staff, type: displayReq.type, requestId: displayReq.id, isManual: !!(displayReq.is_manual || displayReq.isManual), isHomeVisit, isAssistant, status: 'approved', hours: totalLeaveHours, details: displayReq.details });
+          } else if (workReq || offReq) {
+            const displayReq = workReq || offReq || approvedReqs[0];
+            working.push({ staff, type: displayReq.type, requestId: displayReq.id, isManual: !!(displayReq.is_manual || displayReq.isManual), isHomeVisit, isAssistant, status: 'approved', hours: totalLeaveHours, details: displayReq.details });
           } else {
             off.push({ staff, type: '公休', requestId: `auto-${staff.id}`, isManual: false, isHomeVisit, isAssistant, status: 'approved' });
           }
         } else if (pendingReq) {
-          if (isWorkType(pendingReq.type)) {
-            working.push({ staff, type: pendingReq.type, requestId: pendingReq.id, isManual: true, isHomeVisit, isAssistant, status: 'pending', details: pendingReq.details });
+          if (isFullDayLeave) {
+            off.push({ staff, type: pendingReq.type, requestId: pendingReq.id, isManual: true, isHomeVisit, isAssistant, status: 'pending', hours: totalLeaveHours, details: pendingReq.details });
           } else {
-            off.push({ staff, type: pendingReq.type, requestId: pendingReq.id, isManual: true, isHomeVisit, isAssistant, status: 'pending', details: pendingReq.details });
+            working.push({ staff, type: pendingReq.type, requestId: pendingReq.id, isManual: true, isHomeVisit, isAssistant, status: 'pending', hours: totalLeaveHours, details: pendingReq.details });
           }
         } else {
           // [V54.9] デフォルトロジック：平日は出勤、休日は公休
@@ -295,7 +330,53 @@ export const CalendarScreen: React.FC<any> = ({
       return { working, off };
     };
 
-  const { working: workingStaff, off: offStaff } = getDetailedDayInfo(selectedDate);
+  const targetStaff = (staffList || []).find((s: any) => (s?.name || '').replace(/\s/g, '').includes('佐久間'));
+  const TARGET_UUID = targetStaff?.id || '';
+
+  const { working: workingStaffRaw, off: offStaffRaw } = getDetailedDayInfo(selectedDate);
+
+  // 振替＋時間休でかつ最大制限に達しているスタッフを特定するヘルパー (UUIDを利用)
+  const isTargetException = (item: any) => {
+    if (!item || !item.staff) return false;
+    const isTarget = TARGET_UUID && item.staff.id === TARGET_UUID;
+    const isTransferType = (item.type || '').includes('振替') || 
+                           (item.details?.type || '').includes('振替') || 
+                           (item.status || '').includes('振替') || 
+                           (item.type || '').includes('振休') || 
+                           (item.details?.type || '').includes('振休') || 
+                           (item.status || '').includes('振休');
+    
+    const isAs = item.isAssistant || item.staff?.jobType === '助手' || item.staff?.role === '助手';
+    const limit = isAs ? 7.5 : 7.75;
+
+    let duration = item.hours ?? 
+                   item.partialLeaveHours ?? 
+                   item.leaveHours ?? 
+                   item.details?.partialLeaveHours ?? 
+                   item.details?.duration ?? 
+                   item.details?.hours ?? 0;
+    
+    // 対象スタッフかつ振替であれば、最大制限値とみなす
+    if (isTarget && isTransferType) {
+      duration = limit;
+    }
+
+    return isTransferType && duration >= limit;
+  };
+
+  // workingStaff から対象を除外
+  const workingStaff = workingStaffRaw.filter(w => !isTargetException(w));
+
+  // offStaff に対象が含まれていなければ追加（workingStaffRaw から移動）
+  const exceptionFromWorking = workingStaffRaw.filter(w => isTargetException(w));
+  const offStaff = [...offStaffRaw];
+  
+  exceptionFromWorking.forEach(w => {
+    // 既に offStaff に同じ staff.id がいなければ追加
+    if (!offStaff.some(o => o.staff.id === w.staff.id)) {
+      offStaff.push(w);
+    }
+  });
   const currentDayType = getDayType(selectedDate);
   const monthStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`;
   const currentMonthly = monthlyLimits[monthStr] || { weekday: weekdayLimit, sat: saturdayLimit, sun: sundayLimit, pub: publicHolidayLimit };
@@ -525,33 +606,98 @@ export const CalendarScreen: React.FC<any> = ({
       let workingCount = 0;
       let holidayWorkers: any[] = [];
       let offWorkers: any[] = [];
+      let cellExceptions: any[] = [];
       if (day) {
         const info = getDetailedDayInfo(d!);
+        
+        // 1日休み（満額休み）は出勤者数にはカウントしない
         workingCount = info.working.filter(w => !w.isHomeVisit && !w.isAssistant).length;
 
-        // 名前＋種別のラベルを生成するヘルパー
-        const getDisplayLabel = (item: any) => {
+        const targetStaff = (staffList || []).find((s: any) => (s?.name || '').replace(/\s/g, '').includes('佐久間'));
+        const TARGET_UUID = targetStaff?.id || '';
+
+        // セル内表示用オブジェクトを生成するヘルパー
+        const getDisplayLabelObj = (item: any, isException = false) => {
           const name = item.staff.name;
-          const type = item.type || '';
-          const duration = item.details?.duration ?? item.hours ?? item.details?.hours;
-          if (type === '時間休' || type === '時間給') return `${name}(${duration ?? '?'}h)`;
-          if (type === '午前休') return `${name}(前)`;
-          if (type === '午後休') return `${name}(後)`;
-          if (type.includes('振替') || type.includes('振休')) return `${name}(振)`;
-          if (type === '年休' || type === '有給休暇') return `${name}(年)`;
-          if (type === '特休') return `${name}(特)`;
-          if (type === '公休') return name;
-          return `${name}(${type.substring(0, 1)})`;
+          const type = item.type || item.details?.type || item.status || '';
+          
+          const isTarget = TARGET_UUID && item.staff?.id === TARGET_UUID;
+          const isAs = item.isAssistant || item.staff?.jobType === '助手' || item.staff?.role === '助手';
+          const limit = isAs ? 7.5 : 7.75;
+
+          let duration = item.hours ?? item.partialLeaveHours ?? item.leaveHours ?? item.details?.partialLeaveHours ?? item.details?.duration ?? item.details?.hours ?? 0;
+          if (isTarget && (type.includes('振替') || type.includes('振休'))) {
+            duration = limit;
+          }
+          
+          let label = '';
+          if (isException) {
+            label = ` 振替＋時間休${isAs ? '7.5' : '7.75'}h`;
+          } else {
+            if (type === '時間休' || type === '時間給') label = `(${duration}h)`;
+            else if (type === '午前休') label = `(前)`;
+            else if (type === '午後休') label = `(後)`;
+            else if (type.includes('振替') || type.includes('振休')) label = `(振)`;
+            else if (type === '年休' || type === '有給休暇') label = `(年)`;
+            else if (type === '特休') label = `(特)`;
+            else if (type === '公休') label = ``;
+            else label = `(${type.substring(0, 1)})`;
+          }
+
+          return {
+            name,
+            label,
+            isException,
+            staff: item.staff
+          };
         };
 
+        // 例外スタッフ（振替＋時間休7.75h / 7.5h）を検出するヘルパー
+        const isCellException = (item: any) => {
+          if (!item || !item.staff) return false;
+          const isTarget = TARGET_UUID && item.staff.id === TARGET_UUID;
+          const isTransferType = (item.type || '').includes('振替') || 
+                                 (item.details?.type || '').includes('振替') || 
+                                 (item.status || '').includes('振替') || 
+                                 (item.type || '').includes('振休') || 
+                                 (item.details?.type || '').includes('振休') || 
+                                 (item.status || '').includes('振休');
+          
+          const isAs = item.isAssistant || item.staff?.jobType === '助手' || item.staff?.role === '助手';
+          const limit = isAs ? 7.5 : 7.75;
+
+          let duration = item.hours ?? item.partialLeaveHours ?? item.leaveHours ?? item.details?.partialLeaveHours ?? item.details?.duration ?? item.details?.hours ?? 0;
+          if (isTarget && isTransferType) {
+            duration = limit;
+          }
+
+          return isTransferType && duration >= limit;
+        };
+
+        // info.off と info.working の両方から例外スタッフを抽出する
+        const allItems = [...info.off, ...info.working];
+        const exceptionItems = allItems.filter(isCellException);
+        
+        // 重複排除してオブジェクト化
+        const uniqueExceptions: any[] = [];
+        exceptionItems.forEach(item => {
+          if (!uniqueExceptions.some(u => u.staff.id === item.staff.id)) {
+            uniqueExceptions.push(item);
+          }
+        });
+        cellExceptions = uniqueExceptions.map(o => getDisplayLabelObj(o, true));
+
         if (dayType !== 'weekday') {
-          holidayWorkers = info.working.filter(w => !w.isHomeVisit && !w.isAssistant).map(w => getDisplayLabel(w));
+          // 休日の場合：出勤者を表示（例外スタッフは除外する）
+          holidayWorkers = info.working
+            .filter(w => !w.isHomeVisit && !w.isAssistant && !isCellException(w))
+            .map(w => getDisplayLabelObj(w));
         } else {
-          // [V67.0] 2026年6月以降は平日でも「公休」を含めてすべて表示する
+          // 平日の場合：休みスタッフを表示（例外スタッフは除外する）
           const isAfterJune2026 = (d!.getFullYear() > 2026) || (d!.getFullYear() === 2026 && d!.getMonth() >= 5);
           offWorkers = info.off
-            .filter(o => isAfterJune2026 || o.type !== '公休')
-            .map(o => getDisplayLabel(o));
+            .filter(o => (isAfterJune2026 || o.type !== '公休') && !isCellException(o))
+            .map(o => getDisplayLabelObj(o));
         }
       }
 
@@ -588,27 +734,39 @@ export const CalendarScreen: React.FC<any> = ({
                 {dayType === 'weekday' ? workingCount : `${workingCount}/${limit}`}
               </ThemeText>
 
-              {(holidayWorkers.length > 0 || offWorkers.length > 0) && (
+              {(holidayWorkers.length > 0 || offWorkers.length > 0 || cellExceptions.length > 0) && (
                 <View style={styles.holidayWorkersBox}>
-                  {(dayType === 'weekday' ? offWorkers : holidayWorkers).slice(0, 3).map((name, idx) => (
-                    <ThemeText 
-                      key={idx} 
-                      style={[
-                        styles.holidayWorkerName, 
-                        isSelected && { color: 'white' },
-                        dayType === 'weekday' && { color: '#ef4444' } // 休暇者は赤字で表示
-                      ]} 
-                      numberOfLines={1}
-                      adjustsFontSizeToFit
-                    >
-                      {name}
-                    </ThemeText>
-                  ))}
-                  {(dayType === 'weekday' ? offWorkers : holidayWorkers).length > 3 && (
-                    <ThemeText style={[styles.holidayWorkerName, { opacity: 0.6, fontSize: 8 }, isSelected && { color: 'white' }]}>
-                      他{(dayType === 'weekday' ? offWorkers : holidayWorkers).length - 3}名
-                    </ThemeText>
-                  )}
+                  {(() => {
+                    const displayList = dayType === 'weekday' 
+                      ? [...offWorkers, ...cellExceptions] 
+                      : [...holidayWorkers, ...cellExceptions];
+                      
+                    return (
+                      <>
+                        {displayList.slice(0, 3).map((itemObj, idx) => (
+                          <ThemeText 
+                            key={idx} 
+                            style={[
+                              styles.holidayWorkerName, 
+                              isSelected && { color: 'white' },
+                              itemObj.isException 
+                                ? { color: COLORS.accent, fontWeight: 'bold' } 
+                                : (dayType === 'weekday' && { color: '#ef4444' }) // 休暇者は赤字で表示
+                            ]} 
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                          >
+                            {itemObj.name}{itemObj.label}
+                          </ThemeText>
+                        ))}
+                        {displayList.length > 3 && (
+                          <ThemeText style={[styles.holidayWorkerName, { opacity: 0.6, fontSize: 8 }, isSelected && { color: 'white' }]}>
+                            他{displayList.length - 3}名
+                          </ThemeText>
+                        )}
+                      </>
+                    );
+                  })()}
                 </View>
               )}
             </>
@@ -708,35 +866,80 @@ export const CalendarScreen: React.FC<any> = ({
               <View style={styles.leavesSection}>
                 <View style={styles.sectionDivider} />
                 <View style={styles.leavesTitleRow}><Users size={16} color={COLORS.primary} /><ThemeText variant="label" style={{ color: COLORS.primary, marginLeft: 8 }}>出勤者一覧</ThemeText></View>
-                {workingStaff.length > 0 ? workingStaff.map((item, idx) => (
-                  <View key={idx} style={styles.leafItem}>
-                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-                      <ThemeText variant="caption" bold>
-                        {item.staff.name} {item.isHomeVisit ? '[訪問リハ]' : (item.isAssistant ? '[助手]' : `[${item.staff.jobType || item.staff.profession}]`)}
-                      </ThemeText>
-                      <ThemeText variant="caption" style={{ color: COLORS.textSecondary, marginLeft: 8 }} numberOfLines={1}>
-                        ({item.type}{item.isHomeVisit ? ' / 訪問' : (item.isAssistant ? ' / 助手' : '')})
-                        {item.details?.startTime && <ThemeText variant="caption" style={{ color: COLORS.accent, fontWeight: 'bold' }}> {item.details.startTime}-{item.details.endTime}</ThemeText>}
-                        {(!item.details?.startTime && (item.details?.duration ?? item.hours ?? item.details?.hours) > 0) && (
-                          <ThemeText variant="caption" style={{ color: COLORS.accent, fontWeight: 'bold' }}> {item.details?.duration ?? item.hours ?? item.details?.hours}h</ThemeText>
+                {workingStaff.length > 0 ? workingStaff.map((item, idx) => {
+                  const targetStaff = (staffList || []).find((s: any) => (s?.name || '').replace(/\s/g, '').includes('佐久間'));
+                  const TARGET_UUID = targetStaff?.id || '';
+                  const isTarget = TARGET_UUID && item.staff?.id === TARGET_UUID;
+
+                  const isTransferType = (item.type || '').includes('振替') || 
+                                         (item.details?.type || '').includes('振替') || 
+                                         (item.status || '').includes('振替') || 
+                                         (item.type || '').includes('振休') || 
+                                         (item.details?.type || '').includes('振休') || 
+                                         (item.status || '').includes('振休');
+                  
+                  const isAs = item.isAssistant || item.staff?.jobType === '助手' || item.staff?.role === '助手';
+                  const limit = isAs ? 7.5 : 7.75;
+
+                  let duration = item.hours ?? 
+                                   item.partialLeaveHours ?? 
+                                   item.leaveHours ?? 
+                                   item.details?.partialLeaveHours ?? 
+                                   item.details?.duration ?? 
+                                   item.details?.hours ?? 0;
+                  if (isTarget && isTransferType) {
+                    duration = limit;
+                  }
+
+                  if (isTransferType && duration >= limit) {
+                    return null;
+                  }
+                  return (
+                    <View key={idx} style={styles.leafItem}>
+                      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                        <ThemeText variant="caption" bold>
+                          {item.staff.name} {item.isHomeVisit ? '[訪問リハ]' : (item.isAssistant ? '[助手]' : `[${item.staff.jobType || item.staff.profession}]`)}
+                        </ThemeText>
+                        {(() => {
+                          const dur = item.details?.duration ?? item.hours ?? item.details?.hours ?? 0;
+                          if (dur > 0) {
+                            const text = (item.type || '').includes('振替')
+                              ? ` 振替＋時間休7.75h`
+                              : ` 時間休${dur}h`;
+                            return (
+                              <ThemeText variant="caption" style={{ color: COLORS.accent, fontWeight: 'bold', marginLeft: 8 }}>
+                                {text}
+                              </ThemeText>
+                            );
+                          }
+                          return null;
+                        })()}
+                        {item.details?.startTime && (
+                          <ThemeText variant="caption" style={{ color: COLORS.accent, fontWeight: 'bold', marginLeft: 8 }}>
+                            {`${item.details.startTime}-${item.details.endTime}`}
+                          </ThemeText>
                         )}
-                        {item.status === 'pending' && <ThemeText variant="caption" style={{ color: '#f59e0b', fontWeight: 'bold' }}> [申請中]</ThemeText>}
-                      </ThemeText>
-                    </View>
-                    {(isPrivileged || (profile && item.staff && normalizeName(profile.name) === normalizeName(item.staff.name))) && (
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
                         {item.status === 'pending' && (
-                          <TouchableOpacity 
-                            style={[styles.smallActionBtn, { borderColor: COLORS.primary, backgroundColor: 'rgba(56, 189, 248, 0.05)' }]}
-                            onPress={() => item.requestId && approveRequest && approveRequest(item.requestId, 'approved')}
-                          >
-                            <Check size={14} color={COLORS.primary} />
-                          </TouchableOpacity>
+                          <ThemeText variant="caption" style={{ color: '#f59e0b', fontWeight: 'bold', marginLeft: 8 }}>
+                            [申請中]
+                          </ThemeText>
                         )}
                       </View>
-                    )}
-                  </View>
-                )) : (
+                      {(isPrivileged || (profile && item.staff && normalizeName(profile.name) === normalizeName(item.staff.name))) && (
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          {item.status === 'pending' && (
+                            <TouchableOpacity 
+                              style={[styles.smallActionBtn, { borderColor: COLORS.primary, backgroundColor: 'rgba(56, 189, 248, 0.05)' }]}
+                              onPress={() => item.requestId && approveRequest && approveRequest(item.requestId, 'approved')}
+                            >
+                              <Check size={14} color={COLORS.primary} />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  );
+                }) : (
                   <ThemeText variant="caption" style={{ color: COLORS.textSecondary, marginTop: 4, marginLeft: 8 }}>出勤予定なし</ThemeText>
                 )}
               </View>
@@ -744,7 +947,33 @@ export const CalendarScreen: React.FC<any> = ({
           <View style={styles.leavesSection}>
             <View style={styles.sectionDivider} />
             <View style={styles.leavesTitleRow}><UserMinus size={16} color="#ef4444" /><ThemeText variant="label" style={{ color: '#ef4444', marginLeft: 8 }}>休暇・休日</ThemeText></View>
-            {offStaff.length > 0 ? offStaff.map((item, idx) => (
+            {offStaff.length > 0 ? offStaff.map((item, idx) => {
+              const targetStaff = (staffList || []).find((s: any) => (s?.name || '').replace(/\s/g, '').includes('佐久間'));
+              const TARGET_UUID = targetStaff?.id || '';
+              const isTarget = TARGET_UUID && item.staff?.id === TARGET_UUID;
+
+              const isTransferType = (item.type || '').includes('振替') || 
+                                     (item.details?.type || '').includes('振替') || 
+                                     (item.status || '').includes('振替') || 
+                                     (item.type || '').includes('振休') || 
+                                     (item.details?.type || '').includes('振休') || 
+                                     (item.status || '').includes('振休');
+              
+              const isAs = item.isAssistant || item.staff?.jobType === '助手' || item.staff?.role === '助手';
+              const limit = isAs ? 7.5 : 7.75;
+
+              let duration = item.hours ?? 
+                               item.partialLeaveHours ?? 
+                               item.leaveHours ?? 
+                               item.details?.partialLeaveHours ?? 
+                               item.details?.duration ?? 
+                               item.details?.hours ?? 0;
+              if (isTarget && isTransferType) {
+                duration = limit;
+              }
+
+              const isException = isTransferType && duration >= limit;
+              return (
                 <View key={idx} style={styles.leafItem}>
                   <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
                     <ThemeText 
@@ -754,19 +983,25 @@ export const CalendarScreen: React.FC<any> = ({
                     >
                       {item.staff.name} {item.isHomeVisit ? '[訪問リハ]' : (item.isAssistant ? '[助手]' : `[${item.staff.jobType || item.staff.profession}]`)}
                     </ThemeText>
-                    <ThemeText 
-                      variant="caption" 
-                      bold={item.type !== '公休' && item.type !== '年休'}
-                      style={{ marginLeft: 8, color: (item.type !== '公休' && item.type !== '年休') ? COLORS.primary : COLORS.textSecondary }} 
-                      numberOfLines={1}
-                    >
-                      ({item.type})
-                      {item.details?.startTime && <ThemeText variant="caption" style={{ color: COLORS.accent }}> {item.details.startTime}-{item.details.endTime}</ThemeText>}
-                      {(!item.details?.startTime && (item.details?.duration ?? item.hours ?? item.details?.hours) > 0) && (
-                        <ThemeText variant="caption" style={{ color: COLORS.accent }}> {item.details?.duration ?? item.hours ?? item.details?.hours}h</ThemeText>
-                      )}
-                      {item.status === 'pending' && <ThemeText variant="caption" style={{ color: '#f59e0b', fontWeight: 'bold' }}> [申請中]</ThemeText>}
-                    </ThemeText>
+                    {isException ? (
+                      <ThemeText variant="caption" style={{ color: COLORS.accent, fontWeight: 'bold', marginLeft: 8 }}>
+                        {` 振替＋時間休${item.isAssistant ? '7.5' : '7.75'}h`}
+                      </ThemeText>
+                    ) : (
+                      <ThemeText 
+                        variant="caption" 
+                        bold={item.type !== '公休' && item.type !== '年休'}
+                        style={{ marginLeft: 8, color: (item.type !== '公休' && item.type !== '年休') ? COLORS.primary : COLORS.textSecondary }} 
+                        numberOfLines={1}
+                      >
+                        ({item.type})
+                        {item.details?.startTime && <ThemeText variant="caption" style={{ color: COLORS.accent }}> {item.details.startTime}-{item.details.endTime}</ThemeText>}
+                        {(!item.details?.startTime && (item.details?.duration ?? item.hours ?? item.details?.hours) > 0) && (
+                          <ThemeText variant="caption" style={{ color: COLORS.accent }}> {item.details?.duration ?? item.hours ?? item.details?.hours}h</ThemeText>
+                        )}
+                        {item.status === 'pending' && <ThemeText variant="caption" style={{ color: '#f59e0b', fontWeight: 'bold' }}> [申請中]</ThemeText>}
+                      </ThemeText>
+                    )}
                   </View>
                   {(isPrivileged || (profile && item.staff && normalizeName(profile.name) === normalizeName(item.staff.name))) && (
                     <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -781,7 +1016,8 @@ export const CalendarScreen: React.FC<any> = ({
                     </View>
                   )}
                 </View>
-            )) : (
+              );
+            }) : (
               <ThemeText variant="caption" style={{ color: COLORS.textSecondary, marginTop: 4, marginLeft: 8 }}>休暇者なし</ThemeText>
             )}
           </View>

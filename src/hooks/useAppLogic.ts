@@ -23,7 +23,7 @@ export const useAppLogic = () => {
   const config = useConfigData();
   const shifts = useShiftData();
   
-  // [V74.6] useRef を使用してリフェッチ関数の最新状態を保持（クロージャ停滞防止）
+  // [V76.6] useRef を使用してリフェッチ関数の最新状態を保持（クロージャ停滞防止）
   const fetchersRef = React.useRef({
     fetchRequests: req.fetchRequests,
     fetchShifts: shifts.fetchShifts
@@ -97,7 +97,7 @@ export const useAppLogic = () => {
             }
 
             req.setRequests(finalReqs);
-            console.log('✅ Initial Data Loaded [V74.6]:', finalReqs.length);
+            console.log('✅ Initial Data Loaded [V76.6]:', finalReqs.length);
 
             // シニアアーキテクト指令: エポメラル・テスト用モックデータ注入 (SupabaseもLocalも空の場合)
             if (staffData.length === 0) {
@@ -575,15 +575,15 @@ export const useAppLogic = () => {
     }
   }, [auth.profile?.id, isInitialized]);
 
-  // [V74.6] 超高速リアルタイム同期設定 (弾丸仕様)
+  // [V76.6] 超高速リアルタイム同期設定 (弾丸仕様)
   useEffect(() => {
     if (!isInitialized) return;
     
-    console.log('--- [REALTIME] Subscribing to cloud changes (V74.6)... ---');
+    console.log('--- [REALTIME] Subscribing to cloud changes (V76.6)... ---');
     const channel = cloudStorage.subscribeToChanges(async (payload) => {
       const { eventType, table } = payload;
       
-      // [V74.6] useRef経由で最新の関数を呼び出す（Stale Closure 対策）
+      // [V76.6] useRef経由で最新の関数を呼び出す（Stale Closure 対策）
       if (table === 'requests' || table === 'shifts') {
         console.log(`--- [REALTIME_TRIGGER] Refreshing ${table} data due to ${eventType} ---`);
         fetchersRef.current.fetchRequests();

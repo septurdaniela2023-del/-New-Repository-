@@ -318,7 +318,7 @@ export const AdminScreen: React.FC<AdminScreenProps> = ({
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}><ThemeText variant="h1">設定 [V74.6]</ThemeText><ThemeText variant="caption" style={{ fontSize: 9, opacity: 0.3, color: COLORS.textSecondary }}>[BUILD: VERSION 74.6 - BULLETPROOF SYNC]</ThemeText></View>
+      <View style={styles.header}><ThemeText variant="h1">設定 [V76.6]</ThemeText><ThemeText variant="caption" style={{ fontSize: 9, opacity: 0.3, color: COLORS.textSecondary }}>[BUILD: VERSION 76.6 - BULLETPROOF SYNC]</ThemeText></View>
       <ScrollView style={{ flex: 1 }}>
         <View style={{ padding: SPACING.md }}>
 

@@ -218,7 +218,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView style={styles.container} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
           <View style={[styles.header, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
             <View>
               <ThemeText variant="h1">ダッシュボード</ThemeText>
@@ -391,6 +391,11 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     alignItems: 'stretch',
     alignSelf: 'stretch'
+  },
+  scrollView: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    width: '100%',
   },
   scrollContent: { 
     padding: SPACING.md, 
