@@ -82,14 +82,20 @@ export const CalendarScreen: React.FC<any> = ({
 
   // [V55.0] PERFECT DATA SYNC: 全てのスタッフで共通の重複排除・優先順位ロジック
   const requestMap = React.useMemo(() => {
-    // [ID Debug]
-    requests.forEach((req: any) => {
-      const staff = (staffList || []).find((s: any) => s.id === req.staff_id || s.user_id === req.staff_id || s.userId === req.staff_id);
-      console.log(`[ID Debug] RequestDate: ${req.date}, DB_StaffId: ${req.staff_id}, FoundStaff: ${staff ? staff.name : 'NOT FOUND'}`);
-    });
+    // [STRICT FILTER] 真実のソースである requests テーブルから却下・削除済みのIDを抽出
+    const rejectedOrDeletedIds = new Set(
+      (requests || [])
+        .filter(r => r && (r.status === 'rejected' || r.status === 'deleted'))
+        .map(r => String(r.id))
+    );
 
     const map = new Map<string, Map<string, any>>();
-    const allData = [...requests, ...shifts].filter(r => {
+    const allData = [...(requests || []), ...(shifts || [])].filter(r => {
+      if (!r) return false;
+      // 1. レコード自体のステータスが却下・削除の場合は除外
+      if (r.status === 'rejected' || r.status === 'deleted') return false;
+      // 2. requestsテーブル側で却下・削除されているIDを持つレコードは、shifts側の残骸であっても除外
+      if (rejectedOrDeletedIds.has(String(r.id))) return false;
       return true;
     });
 

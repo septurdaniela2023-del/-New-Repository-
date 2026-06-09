@@ -46,13 +46,12 @@ export const useAppLogic = () => {
 
     let mounted = true;
     
-    // [CRITICAL VERSION 48.62] 1.0秒後に強制的に初期化フラグを立てるフェイルセーフ
-    const failsafeTimer = setTimeout(() => {
+    // [SAFETY REFACTOR] 強制アンロックではなく、ネットワークタイムアウトの可能性を警告するためのタイマー
+    const warningTimer = setTimeout(() => {
       if (mounted && !isInitialized) {
-        console.warn('--- [FAILSAFE] Forced initialization unlock after 1.0s ---');
-        setIsInitialized(true);
+        console.warn('--- [WARNING] Initialization is taking longer than expected (10s) ---');
       }
-    }, 1000);
+    }, 10000);
 
     const initializeData = async () => {
         try {
@@ -130,7 +129,7 @@ export const useAppLogic = () => {
         } finally {
             if (mounted) {
               setIsInitialized(true);
-              clearTimeout(failsafeTimer);
+              clearTimeout(warningTimer);
             }
         }
     };
@@ -138,7 +137,7 @@ export const useAppLogic = () => {
     initializeData();
     return () => { 
       mounted = false; 
-      clearTimeout(failsafeTimer);
+      clearTimeout(warningTimer);
     };
   }, [auth.isAuthReady, auth.user, isInitialized]);
 
@@ -193,10 +192,20 @@ export const useAppLogic = () => {
   }, [auth.login]);
 
   const handleLogout = useCallback(async () => {
+    // 1. 各種アプリケーションステートをクリアしてゾンビデータを防ぐ
+    staff.setStaffList([]);
+    req.setRequests([]);
+    req.setRequestsHistory([]);
+    shifts.setShifts([]);
+    
+    // 2. 初期化完了フラグをリセットし、次回ログイン時に再フェッチを走らせる
+    setIsInitialized(false);
+    
+    // 3. 認証関連のログアウト処理
     await auth.logout();
     setCurrentTab('home');
     auth.setIsAdminAuthenticated(false);
-  }, [auth.logout, auth.setIsAdminAuthenticated]);
+  }, [auth.logout, auth.setIsAdminAuthenticated, staff, req, shifts]);
 
   const handleAdminMasterLogin = useCallback(async (password: string) => {
     const masterPass = config.config['@admin_password'] || 'admin123';
