@@ -267,7 +267,7 @@ export const useAppLogic = () => {
       const requestId = 'req-' + Date.now();
       const now = new Date().toISOString();
       const newRequest = { 
-        id: requestId,
+       id: crypto.randomUUID(), // 💡 汎用的な標準UUID（36文字の正規形式）を直接生成！
         ...request, 
         status: 'pending',
         staff_id: trueStaffId, // <--- 真のスタッフIDをセット
