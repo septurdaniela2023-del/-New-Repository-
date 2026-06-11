@@ -214,17 +214,7 @@ export const cloudStorage = {
         
         const mapped = mapToSql(obj, REQ_MAP);
         
-        // [STRICT UUID VALIDATION] DBがUUID型を要求しているカラムについて、UUID形式以外の値が入っていた場合はクリアする
-        if (mapped.user_id) {
-          if (typeof mapped.user_id !== 'string' || !uuidRegex.test(mapped.user_id)) {
-            mapped.user_id = null;
-          }
-        }
-        if (mapped.staff_id) {
-          if (typeof mapped.staff_id !== 'string' || !uuidRegex.test(mapped.staff_id)) {
-            mapped.staff_id = null;
-          }
-        }
+       
         return mapped;
       });
 
